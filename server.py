@@ -62,12 +62,17 @@ def get_state() -> dict:
     for m in messages:
         if m["to_agent"] is None:
             m["to_agent"] = "所有人"
+    # Last turn time for countdown
+    last_turn = _query_db("SELECT created_at FROM turns ORDER BY id DESC LIMIT 1")
+    last_turn_time = last_turn[0]["created_at"] if last_turn else None
     return {
         "agents": agents,
         "turns": list(reversed(turns)),
         "messages": list(reversed(messages)),
         "agent_names": agent_names,
         "sim_status": load_state(),
+        "last_turn_time": last_turn_time,
+        "turn_interval": 1800,
     }
 
 

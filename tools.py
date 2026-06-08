@@ -710,6 +710,8 @@ async def execute(agent_name: str, tool_name: str, args: dict, world: w.World, t
     elif tool_name == "say_to_agent":
         target = args.get("target", "")
         content = args.get("content", "") or args.get("message", "")
+        if not content.strip():
+            return "错误: 消息内容不能为空"
         if target == agent_name:
             return "不能对自己说话"
         ta = db.get_agent(target)
@@ -721,6 +723,8 @@ async def execute(agent_name: str, tool_name: str, args: dict, world: w.World, t
 
     elif tool_name == "speak_to_all":
         content = args.get("content", "") or args.get("message", "")
+        if not content.strip():
+            return "错误: 广播内容不能为空"
         db.insert_message(agent_name, None, content, agent["location"], turn)
         db.log_analytics("broadcast", agent_name, f"@{agent['location']}")
         return f"广播已发出"
@@ -849,6 +853,8 @@ async def execute(agent_name: str, tool_name: str, args: dict, world: w.World, t
     elif tool_name == "whisper":
         target = args.get("target", "")
         content = args.get("content", "") or args.get("message", "")
+        if not content.strip():
+            return "错误: 悄悄话内容不能为空"
         if target == agent_name:
             return "不能对自己说悄悄话"
         ta = db.get_agent(target)

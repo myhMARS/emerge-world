@@ -250,7 +250,6 @@ async def get_reactions(speaker_name: str, tool_name: str, tool_args: dict,
     """Get reactions from nearby agents who overheard speech."""
     logs = []
 
-    # Only speech actions trigger reactions
     if tool_name not in ("say_to_agent", "speak_to_all"):
         return logs
 
@@ -258,7 +257,6 @@ async def get_reactions(speaker_name: str, tool_name: str, tool_args: dict,
     if not speaker:
         return logs
 
-    # Find nearby agents (within hearing distance, not the speaker, alive)
     all_agents = db.list_agents()
     nearby = []
     for a in all_agents:
@@ -268,14 +266,13 @@ async def get_reactions(speaker_name: str, tool_name: str, tool_args: dict,
         if d <= HEARING_DISTANCE:
             nearby.append((d, a))
 
-    # Sort by distance, take up to MAX_OVERHEARD_LISTENERS
     nearby.sort(key=lambda x: x[0])
     nearby = nearby[:MAX_OVERHEARD_LISTENERS]
 
     speech_summary = _get_speech_summary(tool_name, tool_args, speaker_name)
 
     for _, listener in nearby:
-        reaction = await _take_reaction_turn(listener, speech_summary, world, speaker)
+        reaction = await _take_reaction_turn(listener, speech_summary, world, speaker, turn_number)
         if reaction:
             logs.append(reaction)
 
@@ -283,7 +280,8 @@ async def get_reactions(speaker_name: str, tool_name: str, tool_args: dict,
 
 
 async def _take_reaction_turn(agent: dict, speech_summary: str,
-                               world: w.World, speaker: dict | None) -> str | None:
+                               world: w.World, speaker: dict | None,
+                               turn_number: int) -> str | None:
     """Execute one reaction turn for an overhearing agent. Returns log line or None."""
     agent_name = agent["name"]
 
@@ -337,8 +335,9 @@ async def _take_reaction_turn(agent: dict, speech_summary: str,
         return None
 
     result = await tools.execute(agent_name, tool_name, tool_args, world, 0)
-    memory.record_event(agent_name, f"[反应] {tool_name}: {result}", "event")
+    memory.record_event(agent_name, f"[反应 @T{turn_number}] {tool_name}: {result}", "event")
     db.log_analytics("reaction", agent_name, tool_name)
+    db.insert_turn(agent_name, turn_number, tool_name, tool_args, f"[反应] {result[:200]}")
 
     args_str = json.dumps(tool_args, ensure_ascii=False)
     return f"  [反应] {agent_name}@{location} → {tool_name}({args_str}) → {result}"
