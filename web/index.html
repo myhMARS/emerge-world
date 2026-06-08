@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Emergence World</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,sans-serif;background:#0f1117;color:#e1e4e8;padding:24px}
+h1{font-size:22px;margin-bottom:2px}
+#status{color:#8b949e;font-size:13px;margin-bottom:12px;min-height:18px}
+#status b{font-weight:600}
+.tabs{display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap}
+.tab{padding:6px 14px;border:1px solid #30363d;border-radius:6px;cursor:pointer;font-size:13px;background:#161b22;color:#8b949e}
+.tab:hover{color:#e1e4e8}
+.tab.on{background:#1f6feb33;border-color:#58a6ff;color:#58a6ff}
+.panel{display:none}
+.panel.on{display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:16px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;cursor:pointer;transition:all .3s}
+.card:hover{border-color:#58a6ff}
+.card .name{font-weight:700;font-size:13px}.card .loc{color:#58a6ff;font-size:11px;margin-top:2px}
+.card .stats{display:flex;gap:12px;margin-top:6px;font-size:11px;color:#8b949e}
+.active-card{border-color:#58a6ff;box-shadow:0 0 8px #58a6ff33;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 4px #58a6ff33}50%{box-shadow:0 0 12px #58a6ff66}}
+h2{font-size:15px;margin:16px 0 8px;border-bottom:1px solid #30363d;padding-bottom:4px}
+.tl{font-size:12px;max-height:70vh;overflow-y:auto}
+.tl .item{padding:5px 0;border-bottom:1px solid #21262d}
+.tl .tn{color:#8b949e;margin-right:6px;font-size:10px}
+.tl .agent{color:#58a6ff}.tl .rx{padding-left:16px;color:#9ea9b3;font-size:11px}
+.modal{position:fixed;top:0;left:0;width:100%;height:100%;background:#0f1117ee;z-index:10;display:flex;align-items:center;justify-content:center}
+.modal .box{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;max-width:700px;width:90%;max-height:80vh;overflow-y:auto}
+.modal .close{float:right;cursor:pointer;font-size:20px;color:#8b949e;background:none;border:none}
+.modal h3{font-size:18px;margin-bottom:12px}
+.modal .section{margin-top:12px}
+.modal .section h4{font-size:13px;color:#58a6ff;margin-bottom:4px}
+.modal .section div{font-size:12px;color:#8b949e;line-height:1.6}
+.ft{margin-top:12px;color:#484f58;font-size:10px;text-align:center}
+.msg{font-size:11px;padding:3px 0}.msg .from{color:#d2a8ff}.msg .to{color:#8b949e}
+pre{font-size:11px;color:#8b949e;white-space:pre-wrap;margin:4px 0}
+</style>
+</head>
+<body>
+<h1>Emergence World</h1>
+<div id="status">Connecting...</div>
+
+<div class="tabs">
+<div class="tab on" data-panel="agents">Agents</div>
+<div class="tab" data-panel="timeline">Timeline</div>
+<div class="tab" data-panel="messages">Messages</div>
+<div class="tab" data-panel="content">Billboard & Blog</div>
+<div class="tab" data-panel="governance">Governance</div>
+</div>
+
+<div id="panel-agents" class="panel on">
+  <div class="grid" id="agents"></div>
+</div>
+<div id="panel-timeline" class="panel">
+  <div class="tl" id="tl"></div>
+</div>
+<div id="panel-messages" class="panel">
+  <div class="tl" id="msgs"></div>
+</div>
+<div id="panel-content" class="panel">
+  <h2>Billboard</h2><div class="tl" id="billboard"></div>
+  <h2>Blogs</h2><div class="tl" id="blogs"></div>
+</div>
+<div id="panel-governance" class="panel">
+  <h2>Constitution</h2><div id="constitution" style="font-size:12px;line-height:1.8"></div>
+  <h2>Proposals</h2><div class="tl" id="proposals"></div>
+  <h2>Victory Arch Pitches</h2><div class="tl" id="pitches"></div>
+</div>
+
+<div class="ft">SSE real-time · click agent card for details</div>
+
+<div id="agent-modal" class="modal" style="display:none"><div class="box"></div></div>
+
+<script>
+const API='/emerge/api';
+let state={agents:[],turns:[],messages:[],phase:''};
+
+function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+
+function switchPanel(name){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+  document.getElementById('panel-'+name).classList.add('on');
+  document.querySelector('[data-panel='+name+']').classList.add('on');
+  if(name==='content') loadContent();
+  if(name==='governance') loadGovernance();
+}
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>switchPanel(t.dataset.panel));
+
+function showAgent(name){
+  fetch(API+'/agent/'+encodeURIComponent(name)).then(r=>r.json()).then(d=>{
+    let html=`<button class="close" onclick="document.getElementById('agent-modal').style.display='none'">&times;</button>`;
+    html+=`<h3>${esc(d.agent.name)}</h3>`;
+    html+=`<p style="font-size:12px;color:#8b949e">📍 ${esc(d.agent.location)} ⚡${(d.agent.energy||0)|0}% 💰${(d.agent.credits||0)|1}</p>`;
+    html+=`<p style="font-size:12px;color:#8b949e">${esc(d.agent.personality)}</p>`;
+    html+=`<p style="font-size:11px;color:#58a6ff">Goal: ${esc(d.agent.goal)}</p>`;
+
+    if(d.soul.length){
+      html+=`<div class="section"><h4>Core Beliefs</h4>`;
+      d.soul.forEach(s=>html+=`<div>💎 ${esc(s.content)}</div>`);
+      html+=`</div>`;
+    }
+    if(d.relationships.length){
+      html+=`<div class="section"><h4>Relationships</h4>`;
+      d.relationships.forEach(r=>{
+        let other=r.agent_a===d.agent.name?r.agent_b:r.agent_a;
+        html+=`<div>🤝 ${esc(other)}: ${esc(r.rel_type)} ${r.notes?esc(r.notes):''}</div>`;
+      });
+      html+=`</div>`;
+    }
+    if(d.memories.length){
+      html+=`<div class="section"><h4>Recent Memories (${d.memories.length})</h4>`;
+      d.memories.slice(0,15).forEach(m=>{
+        let tag={event:'📌',conversation:'💬',thought:'💭',longterm:'📝'}[m.category]||'📌';
+        html+=`<div>${tag} ${esc(m.content).substring(0,200)}</div>`;
+      });
+      html+=`</div>`;
+    }
+    if(d.diary.length){
+      html+=`<div class="section"><h4>Diary</h4>`;
+      d.diary.slice(0,5).forEach(dd=>html+=`<div>📖 [${dd.entry_date}] ${dd.mood?esc(dd.mood)+' ':''}${esc(dd.content).substring(0,200)}</div>`);
+      html+=`</div>`;
+    }
+    document.getElementById('agent-modal').querySelector('.box').innerHTML=html;
+    document.getElementById('agent-modal').style.display='flex';
+  });
+}
+
+function loadContent(){
+  fetch(API+'/billboard').then(r=>r.json()).then(d=>{
+    document.getElementById('billboard').innerHTML=d.billboard.map(p=>{
+      let replies=(p.replies||[]).map(r=>`<div class="rx">↳ ${esc(r.replier)}: ${esc(r.content).substring(0,150)}</div>`).join('');
+      return `<div class="item"><b>${esc(p.poster)}</b> <span style="color:#8b949e">[${esc(p.category)}]</span>: ${esc(p.content).substring(0,300)}${replies}</div>`;
+    }).join('')||'No posts yet';
+    document.getElementById('blogs').innerHTML=d.blogs.map(b=>{
+      let comments=(b.comments||[]).map(c=>`<div class="rx">↳ ${esc(c.commenter)}: ${esc(c.content).substring(0,150)}</div>`).join('');
+      return `<div class="item"><b>${esc(b.author)}</b> — <i>${esc(b.title)}</i>: ${esc(b.content).substring(0,200)}${comments}</div>`;
+    }).join('')||'No blogs yet';
+  });
+}
+
+function loadGovernance(){
+  fetch(API+'/governance').then(r=>r.json()).then(d=>{
+    document.getElementById('constitution').innerHTML=d.constitution.articles.map(a=>`<div>${esc(a)}</div>`).join('');
+    document.getElementById('proposals').innerHTML=d.proposals.map(p=>
+      `<div class="item"><b>#${p.id}</b> [${esc(p.category)}] <span class="agent">${esc(p.proposer)}</span>: ${esc(p.title)} (${p.yes_votes}Y/${p.no_votes}N, ${p.status})</div>`
+    ).join('')||'No proposals yet';
+    document.getElementById('pitches').innerHTML=d.pitches.map(p=>
+      `<div class="item"><b>#${p.id}</b> <span class="agent">${esc(p.pitcher)}</span>: ${esc(p.title)} — ${p.votes} votes</div>`
+    ).join('')||'No pitches yet';
+  });
+}
+
+function renderAgents(){
+  document.getElementById('agents').innerHTML=state.agents.map(a=>{
+    let cls='';if(state.active&&state.active===a.name)cls=' active-card';
+    return `<div class="card${cls}" onclick="showAgent('${esc(a.name)}')">
+      <div class="name">${esc(a.name)}</div><div class="loc">📍 ${esc(a.location)}</div>
+      <div class="stats"><span>⚡${(a.energy||0)|0}%</span><span>💰${(a.credits||0)|1}</span></div>
+    </div>`;
+  }).join('');
+}
+
+const evt=new EventSource(API+'/events');
+evt.onmessage=e=>{
+  try{
+    const d=JSON.parse(e.data);
+    if(d.type==='thinking'){state.phase='thinking';renderAgents();}
+    else if(d.type==='action'){state.phase=d.tool||'';renderAgents();}
+    else if(d.type==='done'){state.phase='';renderAgents();setTimeout(()=>fetch(API+'/state').then(r=>r.json()).then(data=>{
+      state=data;renderAll();
+    }).catch(()=>{}),300);}
+    else if(d.type==='reaction'){}
+  }catch(ex){}
+};
+evt.onerror=()=>{};
+
+function renderAll(){
+  renderAgents();
+  document.getElementById('tl').innerHTML=state.turns.map(t=>
+    `<div class="item"><span class="tn">T${t.turn_number}</span><span class="agent">${esc(t.agent_name)}</span> → ${esc((t.response_summary||'').substring(0,200))}</div>`
+  ).join('');
+  document.getElementById('msgs').innerHTML=state.messages.map(m=>
+    `<div class="item"><span class="agent">${esc(m.from_agent)}</span> <span style="color:#8b949e">→${esc(m.to_agent)}</span>: ${esc(m.content).substring(0,200)}</div>`
+  ).join('');
+}
+
+fetch(API+'/state').then(r=>r.json()).then(data=>{state=data;renderAll();}).catch(()=>{});
+</script>
+</body>
+</html>
