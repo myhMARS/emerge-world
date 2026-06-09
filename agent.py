@@ -173,12 +173,19 @@ async def take_turn(agent_name: str, world: w.World, turn_number: int):
         return
 
     # Handle both array and single object responses
-    tool_calls = response if isinstance(response, list) else [response]
-    if not isinstance(tool_calls, list) or len(tool_calls) == 0:
+    if isinstance(response, list):
+        tool_calls = [t for t in response if isinstance(t, dict)]
+    elif isinstance(response, dict):
+        tool_calls = [response]
+    else:
+        tool_calls = []
+    if not tool_calls:
         tool_calls = [{"tool": "idle", "args": {"reason": "no action"}}]
 
     # Phase 2: Execute tools in sequence
     for i, tc in enumerate(tool_calls[:5]):
+        if not isinstance(tc, dict):
+            continue
         tool_name = tc.get("tool", "idle")
         tool_args = tc.get("args", {})
         if not isinstance(tool_args, dict):
