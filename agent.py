@@ -320,19 +320,27 @@ async def _take_reaction_turn(agent: dict, speech_summary: str,
         same_location_note=same_loc,
     )
 
+    # Only offer a limited set for reactions
+    reaction_tools = [
+        {"name": "say_to_agent", "description": "回复说话者", "parameters": {"type": "object", "properties": {"target": {"type": "string"}, "content": {"type": "string"}}, "required": ["target", "content"]}},
+        {"name": "speak_to_all", "description": "对附近所有人发表看法", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
+        {"name": "think", "description": "默默记录想法", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
+        {"name": "hug_agent", "description": "拥抱对方", "parameters": {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]}},
+        {"name": "wave_at", "description": "向对方挥手", "parameters": {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]}},
+        {"name": "idle", "description": "无视，继续做自己的事", "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]}},
+    ]
     try:
-        response = await llm.chat_json(system, "你听到了什么？如何反应？只输出 JSON。")
+        tcs = await llm.chat_tools(system, reaction_tools)
+        if not tcs:
+            return None
     except Exception:
         return None
 
-    tool_name = response.get("tool", "idle")
-    tool_args = response.get("args", {})
+    tc = tcs[0]
+    tool_name = tc.get("tool", "idle")
+    tool_args = tc.get("args", {})
     if not isinstance(tool_args, dict):
         tool_args = {}
-
-    # Normalize: LLM sometimes uses "message" instead of "content"
-    if "message" in tool_args and not tool_args.get("content"):
-        tool_args["content"] = tool_args.pop("message")
 
     # idle/think = no visible reaction
     if tool_name in ("idle", "think"):
