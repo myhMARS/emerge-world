@@ -92,8 +92,11 @@ async def main():
                     log.info(f"[Turn {turn}] [{world.time_str}] {name} → {event['tool']}({event['args']})")
                     update_state(phase="acting", detail=event.get("tool", ""))
                     emit_event({"type": "action", "agent": name, "turn": turn, "tool": event["tool"]})
-                elif typ == "done":
+                elif typ == "action_done":
                     log.info(event["msg"])
+                    update_state(phase="acting")
+                elif typ == "done":
+                    log.info(f"[Turn {turn}] {name} completed")
                     update_state(phase="done")
                     emit_event({"type": "done", "agent": name, "turn": turn})
                 elif typ == "reaction":

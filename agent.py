@@ -135,7 +135,7 @@ def _build_system_prompt(agent: dict, world: w.World) -> str:
 
 ## 行为准则
 1. **语言**: 必须使用中文。所有对话、思考、回复都必须用中文。禁止使用英语或其他语言。
-2. **必须行动**: 每个 turn 你必须调用一个工具。不要只是思考。
+2. **必须行动**: 每个 turn 你可以调用 1-5 个工具（按顺序执行）。先移动到目标地标，再使用该地标的专属工具。不要只是思考和说话。
 3. **离开家**: 一直待在家里很无聊。去 Town Hall 提案、Victory Arch 赚钱、Library 查资料、Billboard 发公告、TechHub 写代码。go_to_place 移动后就能解锁新工具。
 4. **收到消息必须回应**: 有人对你说话时，你应该回复。忽略消息是不礼貌的。
 5. **兑现承诺**: 如果你答应了要做什么（写提案、发博客、转账），就在这个 turn 移动过去并执行。
@@ -146,7 +146,7 @@ def _build_system_prompt(agent: dict, world: w.World) -> str:
 ## 工具
 {_format_tools_section(agent['location'])}
 
-用 JSON 回复: {{"tool": "工具名", "args": {{...}}}}"""
+用 JSON 数组回复（可包含 1-5 个工具调用，按顺序执行）: [{{"tool": "工具名", "args": {{...}}}}]"""
 
 
 async def take_turn(agent_name: str, world: w.World, turn_number: int):
@@ -165,48 +165,55 @@ async def take_turn(agent_name: str, world: w.World, turn_number: int):
     system = _build_system_prompt(agent, world)
 
     try:
-        response = await llm.chat_json(system, "请选择一个工具执行。只输出 JSON，不要输出其他内容。")
+        response = await llm.chat_json(system, "选择一个或多个工具执行。输出 JSON 数组。")
     except Exception as e:
         msg = f"[Turn {turn_number}] [{time_str}] {agent_name} LLM 调用失败: {e}"
         db.insert_turn(agent_name, turn_number, "error", {"error": str(e)}, f"LLM 调用失败: {e}")
         yield {"type": "error", "msg": msg}
         return
 
-    tool_name = response.get("tool", "idle")
-    tool_args = response.get("args", {})
-    if not isinstance(tool_args, dict):
-        tool_args = {}
+    # Handle both array and single object responses
+    tool_calls = response if isinstance(response, list) else [response]
+    if not isinstance(tool_calls, list) or len(tool_calls) == 0:
+        tool_calls = [{"tool": "idle", "args": {"reason": "no action"}}]
 
-    if "message" in tool_args and not tool_args.get("content"):
-        tool_args["content"] = tool_args.pop("message")
+    # Phase 2: Execute tools in sequence
+    for i, tc in enumerate(tool_calls[:5]):
+        tool_name = tc.get("tool", "idle")
+        tool_args = tc.get("args", {})
+        if not isinstance(tool_args, dict):
+            tool_args = {}
+        if "message" in tool_args and not tool_args.get("content"):
+            tool_args["content"] = tool_args.pop("message")
 
-    # Phase 2: Action
-    args_str = json.dumps(tool_args, ensure_ascii=False)
-    yield {"type": "action", "agent": agent_name, "turn": turn_number, "time": time_str,
-           "tool": tool_name, "args": args_str, "location": location}
+        args_str = json.dumps(tool_args, ensure_ascii=False)
+        yield {"type": "action", "agent": agent_name, "turn": turn_number, "time": time_str,
+               "tool": tool_name, "args": args_str, "location": location}
 
-    result = await tools.execute(agent_name, tool_name, tool_args, world, turn_number)
+        result = await tools.execute(agent_name, tool_name, tool_args, world, turn_number)
+        db.insert_turn(agent_name, turn_number, tool_name, tool_args, result)
+        memory.record_event(agent_name, f"[{tool_name}] {result}", "event")
+        db.log_analytics("tool_use", agent_name, tool_name)
 
-    # Record turn
-    db.insert_turn(agent_name, turn_number, tool_name, tool_args, result)
-    memory.record_event(agent_name, f"[{tool_name}] {result}", "event")
-    db.log_analytics("tool_use", agent_name, tool_name)
+        location = db.get_agent(agent_name)["location"]
 
-    # Energy decay
-    location = db.get_agent(agent_name)["location"]
-    new_energy = max(0, agent["energy"] - 2)
+        line = f"[Turn {turn_number}] [{time_str}] {agent_name}@{location} → {tool_name}({args_str}) → {result}"
+        yield {"type": "action_done", "msg": line, "agent": agent_name, "turn": turn_number,
+               "tool_name": tool_name, "tool_args": tool_args, "location": location, "result": result}
+
+        # Reactions if speech
+        if tool_name in ("say_to_agent", "speak_to_all"):
+            reactions = await get_reactions(agent_name, tool_name, tool_args, world, turn_number)
+            for rline in reactions:
+                yield {"type": "reaction", "msg": rline}
+
+    # Energy decay + summarization after all tools
+    new_energy = max(0, agent["energy"] - 2 * min(len(tool_calls), 5))
     db.update_agent(agent_name, energy=new_energy)
     await memory.maybe_summarize(agent_name)
 
-    line = f"[Turn {turn_number}] [{time_str}] {agent_name}@{location} → {tool_name}({args_str}) → {result}"
-    yield {"type": "done", "msg": line, "agent": agent_name, "turn": turn_number,
-           "tool_name": tool_name, "tool_args": tool_args, "location": location, "result": result}
-
-    # Phase 3: Reactions (if speech)
-    if tool_name in ("say_to_agent", "speak_to_all"):
-        reactions = await get_reactions(agent_name, tool_name, tool_args, world, turn_number)
-        for rline in reactions:
-            yield {"type": "reaction", "msg": rline}
+    yield {"type": "done", "agent": agent_name, "turn": turn_number,
+           "location": location}
 
 
 # ── Reactive Conversation System ──────────────────────────────────────
@@ -233,7 +240,7 @@ REACTION_SYSTEM = """你是 {name}，你无意中听到了附近的对话。
 - **think**: 默默记录你的想法但不参与
 - **idle**: 无视，继续做自己的事
 
-根据你的个性做出自然的反应。用 JSON 回复: {{"tool": "工具名", "args": {{...}}}}"""
+根据你的个性做出自然的反应。用 JSON 数组回复（可包含 1-5 个工具调用，按顺序执行）: [{{"tool": "工具名", "args": {{...}}}}]"""
 
 
 def _get_speech_summary(tool_name: str, tool_args: dict, speaker: str) -> str:
