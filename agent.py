@@ -146,7 +146,7 @@ def _build_system_prompt(agent: dict, world: w.World) -> str:
 ## 工具
 {_format_tools_section(agent['location'])}
 
-用 JSON 数组回复（可包含 1-5 个工具调用，按顺序执行）: [{{"tool": "工具名", "args": {{...}}}}]"""
+调用你需要的工具（可连续调用多个，按顺序执行）。"""
 
 
 async def take_turn(agent_name: str, world: w.World, turn_number: int):
@@ -165,22 +165,13 @@ async def take_turn(agent_name: str, world: w.World, turn_number: int):
     system = _build_system_prompt(agent, world)
 
     try:
-        response = await llm.chat_json(system, "选择一个或多个工具执行。输出 JSON 数组。")
+        available_tools = tools.get_defs_for_location(location)
+        tool_calls = await llm.chat_tools(system, available_tools)
     except Exception as e:
         msg = f"[Turn {turn_number}] [{time_str}] {agent_name} LLM 调用失败: {e}"
         db.insert_turn(agent_name, turn_number, "error", {"error": str(e)}, f"LLM 调用失败: {e}")
         yield {"type": "error", "msg": msg}
         return
-
-    # Handle both array and single object responses
-    if isinstance(response, list):
-        tool_calls = [t for t in response if isinstance(t, dict)]
-    elif isinstance(response, dict):
-        tool_calls = [response]
-    else:
-        tool_calls = []
-    if not tool_calls:
-        tool_calls = [{"tool": "idle", "args": {"reason": "no action"}}]
 
     # Phase 2: Execute tools in sequence
     for i, tc in enumerate(tool_calls[:5]):
@@ -190,13 +181,6 @@ async def take_turn(agent_name: str, world: w.World, turn_number: int):
         tool_args = tc.get("args", {})
         if not isinstance(tool_args, dict):
             tool_args = {}
-        # Normalize LLM's inconsistent parameter names for speech tools
-        if tool_name in ("say_to_agent", "speak_to_all", "whisper"):
-            if not tool_args.get("content"):
-                for key in ("message", "text", "msg"):
-                    if tool_args.get(key):
-                        tool_args["content"] = tool_args.pop(key)
-                        break
 
         args_str = json.dumps(tool_args, ensure_ascii=False)
         yield {"type": "action", "agent": agent_name, "turn": turn_number, "time": time_str,
@@ -252,7 +236,7 @@ REACTION_SYSTEM = """你是 {name}，你无意中听到了附近的对话。
 - **think**: 默默记录你的想法但不参与
 - **idle**: 无视，继续做自己的事
 
-根据你的个性做出自然的反应。用 JSON 数组回复（可包含 1-5 个工具调用，按顺序执行）: [{{"tool": "工具名", "args": {{...}}}}]"""
+根据你的个性做出自然的反应。调用你需要的工具（可连续调用多个，按顺序执行）。"""
 
 
 def _get_speech_summary(tool_name: str, tool_args: dict, speaker: str) -> str:

@@ -61,6 +61,56 @@ async def chat_json(
     return json.loads(content)
 
 
+async def chat_tools(
+    system: str,
+    tools: list[dict],
+    model: str | None = None,
+    temperature: float = 0.7,
+) -> list[dict]:
+    """Send chat request with native function calling. Returns list of tool calls."""
+    global _client
+    if _client is None:
+        _client = _build_client()
+
+    openai_tools = []
+    for t in tools:
+        openai_tools.append({
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "parameters": t.get("parameters", {"type": "object", "properties": {}, "required": []}),
+            },
+        })
+
+    response = await _client.chat.completions.create(
+        model=model or LLM_CONFIG["model"],
+        temperature=temperature,
+        messages=[
+            {"role": "system", "content": system},
+        ],
+        tools=openai_tools,
+        tool_choice="auto",
+    )
+
+    msg = response.choices[0].message
+    if msg.tool_calls:
+        return [
+            {"tool": tc.function.name, "args": json.loads(tc.function.arguments)}
+            for tc in msg.tool_calls
+        ]
+    if msg.content:
+        try:
+            parsed = json.loads(msg.content)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict) and "tool" in parsed:
+                return [parsed]
+        except json.JSONDecodeError:
+            pass
+    return [{"tool": "idle", "args": {"reason": msg.content[:100] if msg.content else "no response"}}]
+
+
 async def chat_text(
     system: str,
     prompt: str,
