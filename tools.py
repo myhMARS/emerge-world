@@ -709,7 +709,7 @@ async def execute(agent_name: str, tool_name: str, args: dict, world: w.World, t
     # --- Communication ---
     elif tool_name == "say_to_agent":
         target = args.get("target", "")
-        content = args.get("content", "") or args.get("message", "")
+        content = args.get("content", "") or args.get("message", "") or args.get("text", "") or args.get("msg", "") or args.get("text", "") or args.get("msg", "")
         if not content.strip():
             return "错误: 消息内容不能为空"
         if target == agent_name:
@@ -722,7 +722,7 @@ async def execute(agent_name: str, tool_name: str, args: dict, world: w.World, t
         return f"消息已发送给 {target}"
 
     elif tool_name == "speak_to_all":
-        content = args.get("content", "") or args.get("message", "")
+        content = args.get("content", "") or args.get("message", "") or args.get("text", "") or args.get("msg", "")
         if not content.strip():
             return "错误: 广播内容不能为空"
         db.insert_message(agent_name, None, content, agent["location"], turn)
@@ -852,7 +852,7 @@ async def execute(agent_name: str, tool_name: str, args: dict, world: w.World, t
     # --- Communication ---
     elif tool_name == "whisper":
         target = args.get("target", "")
-        content = args.get("content", "") or args.get("message", "")
+        content = args.get("content", "") or args.get("message", "") or args.get("text", "") or args.get("msg", "")
         if not content.strip():
             return "错误: 悄悄话内容不能为空"
         if target == agent_name:

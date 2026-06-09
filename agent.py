@@ -183,8 +183,13 @@ async def take_turn(agent_name: str, world: w.World, turn_number: int):
         tool_args = tc.get("args", {})
         if not isinstance(tool_args, dict):
             tool_args = {}
-        if "message" in tool_args and not tool_args.get("content"):
-            tool_args["content"] = tool_args.pop("message")
+        # Normalize LLM's inconsistent parameter names for speech tools
+        if tool_name in ("say_to_agent", "speak_to_all", "whisper"):
+            if not tool_args.get("content"):
+                for key in ("message", "text", "msg"):
+                    if tool_args.get(key):
+                        tool_args["content"] = tool_args.pop(key)
+                        break
 
         args_str = json.dumps(tool_args, ensure_ascii=False)
         yield {"type": "action", "agent": agent_name, "turn": turn_number, "time": time_str,
